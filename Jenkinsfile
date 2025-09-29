@@ -7,67 +7,45 @@ pipeline {
 
   environment {
     GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
-    // Название SonarQube-сервера в Jenkins (Manage Jenkins → System → SonarQube servers)
+
+    // Jenkins -> Manage Jenkins -> System -> SonarQube servers (name)
     SONARQUBE_SERVER = 'sonarqube-server'
-    GITHUB_CREDENTIALS = '08fbc2eb-0bd3-4593-89e7-a73d887e8ab9'   // <-- ID твоего GitHub PAT
+
+    // Jenkins credentials: GitHub PAT (repo:status) -> ID
+    GITHUB_CREDENTIALS = '08fbc2eb-0bd3-4593-89e7-a73d887e8ab9'
   }
 
   stages {
     stage('Checkout') {
       steps {
         script {
-          // 1) checkout
+          // 1) checkout и фиксация SHA
           def scmVars = checkout scm
           env.GIT_COMMIT = scmVars.GIT_COMMIT
 
-          // 2) origin URL
+          // 2) origin URL → repoUrl (HTTPS)
           def remote = sh(script: 'git config --get remote.origin.url', returnStdout: true).trim()
-          echo "origin: ${remote}"
-
-          // 3) Парсим owner/repo БЕЗ regex
-          String owner = null, repo = null
-
-          if (remote?.startsWith('git@')) {
-            // git@github.com:owner/repo.git
-            def parts = remote.split(':', 2)
-            if (parts.length == 2) {
-              def path = parts[1]
-              if (path.endsWith('.git')) path = path.substring(0, path.length() - 4)
-              def slash = path.indexOf('/')
-              if (slash > 0) {
-                owner = path.substring(0, slash)
-                repo  = path.substring(slash + 1)
-              }
-            }
-          } else if (remote?.startsWith('http')) {
-            // https://github.com/owner/repo(.git)
-            def url = new java.net.URL(remote)
-            def path = url.getPath()
-            if (path.startsWith('/')) path = path.substring(1)
+          def repoUrl = remote
+          if (remote.startsWith('git@')) {
+            // git@github.com:owner/repo(.git) -> https://github.com/owner/repo
+            def path = remote.split(':', 2)[1]
             if (path.endsWith('.git')) path = path.substring(0, path.length() - 4)
-            def slash = path.indexOf('/')
-            if (slash > 0) {
-              owner = path.substring(0, slash)
-              repo  = path.substring(slash + 1)
-            }
+            repoUrl = "https://github.com/${path}"
+          } else if (remote.endsWith('.git')) {
+            repoUrl = remote.substring(0, remote.length() - 4)
           }
+          env.REPO_URL = repoUrl
+          echo "Repo URL for notifications: ${env.REPO_URL}"
+        }
 
-          if (owner && repo) {
-            env.GH_OWNER = owner
-            env.GH_REPO  = repo
-            echo "GitHub repo detected: ${env.GH_OWNER}/${env.GH_REPO} @ ${env.GIT_COMMIT}"
-          } else {
-            env.GH_NOTIFY_DISABLED = 'true'
-            echo "WARN: Не удалось распарсить GitHub slug из ${remote} — githubNotify будет отключён"
-          }
-
-          // 4) Общий стартовый статус (если парсинг успешен)
-          if (env.GH_NOTIFY_DISABLED != 'true') {
+        // стартовый общий статус
+        script {
+          try {
             githubNotify credentialsId: env.GITHUB_CREDENTIALS,
-              account: env.GH_OWNER, repo: env.GH_REPO, sha: env.GIT_COMMIT,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
               context: 'ci', status: 'PENDING',
               description: 'Pipeline started', targetUrl: env.BUILD_URL
-          }
+          } catch (e) { echo "githubNotify (ci start) skipped: ${e}" }
         }
       }
     }
@@ -75,34 +53,30 @@ pipeline {
     stage('Build') {
       steps {
         script {
-          if (env.GH_NOTIFY_DISABLED != 'true') {
+          try {
             githubNotify credentialsId: env.GITHUB_CREDENTIALS,
-              account: env.GH_OWNER, repo: env.GH_REPO, sha: env.GIT_COMMIT,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
               context: 'ci/build', status: 'PENDING',
               description: 'Build running', targetUrl: env.BUILD_URL
-          }
+          } catch (e) { echo "githubNotify (build start) skipped: ${e}" }
         }
         sh "./gradlew --no-daemon clean assemble -x test"
       }
       post {
         success {
           script {
-            if (env.GH_NOTIFY_DISABLED != 'true') {
-              githubNotify credentialsId: env.GITHUB_CREDENTIALS,
-                account: env.GH_OWNER, repo: env.GH_REPO, sha: env.GIT_COMMIT,
-                context: 'ci/build', status: 'SUCCESS',
-                description: 'Build passed', targetUrl: env.BUILD_URL
-            }
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/build', status: 'SUCCESS',
+              description: 'Build passed', targetUrl: env.BUILD_URL
           }
         }
         failure {
           script {
-            if (env.GH_NOTIFY_DISABLED != 'true') {
-              githubNotify credentialsId: env.GITHUB_CREDENTIALS,
-                account: env.GH_OWNER, repo: env.GH_REPO, sha: env.GIT_COMMIT,
-                context: 'ci/build', status: 'FAILURE',
-                description: 'Build failed', targetUrl: env.BUILD_URL
-            }
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/build', status: 'FAILURE',
+              description: 'Build failed', targetUrl: env.BUILD_URL
           }
         }
       }
@@ -111,9 +85,12 @@ pipeline {
     stage('Tests') {
       steps {
         script {
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/tests', status: 'PENDING',
-                       description: 'Tests running', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                       account: env.GH_OWNER, repo: env.GH_REPO
+          try {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/tests', status: 'PENDING',
+              description: 'Tests running', targetUrl: env.BUILD_URL
+          } catch (e) { echo "githubNotify (tests start) skipped: ${e}" }
         }
         sh "./gradlew --no-daemon test jacocoTestReport"
       }
@@ -123,25 +100,33 @@ pipeline {
           archiveArtifacts artifacts: 'build/reports/**', allowEmptyArchive: true
         }
         success {
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/tests', status: 'SUCCESS',
-                       description: 'Tests passed', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                       account: env.GH_OWNER, repo: env.GH_REPO
+          script {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/tests', status: 'SUCCESS',
+              description: 'Tests passed', targetUrl: env.BUILD_URL
+          }
         }
         failure {
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/tests', status: 'FAILURE',
-                       description: 'Tests failed', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                       account: env.GH_OWNER, repo: env.GH_REPO
+          script {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/tests', status: 'FAILURE',
+              description: 'Tests failed', targetUrl: env.BUILD_URL
+          }
         }
       }
     }
 
-
-stage('SonarQube Analysis') {
+    stage('SonarQube Analysis') {
       steps {
         script {
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/sonarqube', status: 'PENDING',
-                       description: 'SonarQube analysis running', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                       account: env.GH_OWNER, repo: env.GH_REPO
+          try {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/sonarqube', status: 'PENDING',
+              description: 'SonarQube analysis running', targetUrl: env.BUILD_URL
+          } catch (e) { echo "githubNotify (sonar start) skipped: ${e}" }
         }
         withSonarQubeEnv("${SONARQUBE_SERVER}") {
           sh """
@@ -157,11 +142,14 @@ stage('SonarQube Analysis') {
       steps {
         timeout(time: 15, unit: 'MINUTES') {
           script {
-            def qg = waitForQualityGate() // abortPipeline: true по умолчанию в новых версиях не обязателен
+            def qg = waitForQualityGate()
             if (qg.status != 'OK') {
-              githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/sonarqube', status: 'FAILURE',
-                           description: "Quality Gate: ${qg.status}", targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                           account: env.GH_OWNER, repo: env.GH_REPO
+              try {
+                githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+                  repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+                  context: 'ci/sonarqube', status: 'FAILURE',
+                  description: "Quality Gate: ${qg.status}", targetUrl: env.BUILD_URL
+              } catch (e) { echo "githubNotify (sonar fail) skipped: ${e}" }
               error "Quality Gate: ${qg.status}"
             }
           }
@@ -169,9 +157,12 @@ stage('SonarQube Analysis') {
       }
       post {
         success {
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/sonarqube', status: 'SUCCESS',
-                       description: 'Quality Gate passed', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                       account: env.GH_OWNER, repo: env.GH_REPO
+          script {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/sonarqube', status: 'SUCCESS',
+              description: 'Quality Gate passed', targetUrl: env.BUILD_URL
+          }
         }
       }
     }
@@ -180,23 +171,32 @@ stage('SonarQube Analysis') {
       when { branch 'main' }
       steps {
         script {
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/package', status: 'PENDING',
-                       description: 'Packaging', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                       account: env.GH_OWNER, repo: env.GH_REPO
+          try {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/package', status: 'PENDING',
+              description: 'Packaging', targetUrl: env.BUILD_URL
+          } catch (e) { echo "githubNotify (package start) skipped: ${e}" }
         }
         sh "./gradlew --no-daemon clean build"
         archiveArtifacts artifacts: 'build/libs/*.jar', onlyIfSuccessful: true
       }
       post {
         success {
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/package', status: 'SUCCESS',
-                       description: 'Artifact built', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                       account: env.GH_OWNER, repo: env.GH_REPO
+          script {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/package', status: 'SUCCESS',
+              description: 'Artifact built', targetUrl: env.BUILD_URL
+          }
         }
         failure {
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: 'ci/package', status: 'FAILURE',
-                       description: 'Packaging failed', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT,
-                       account: env.GH_OWNER, repo: env.GH_REPO
+          script {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+              context: 'ci/package', status: 'FAILURE',
+              description: 'Packaging failed', targetUrl: env.BUILD_URL
+          }
         }
       }
     }
@@ -205,23 +205,22 @@ stage('SonarQube Analysis') {
   post {
     success {
       script {
-        if (env.GH_NOTIFY_DISABLED != 'true') {
-          githubNotify credentialsId: env.GITHUB_CREDENTIALS,
-            account: env.GH_OWNER, repo: env.GH_REPO, sha: env.GIT_COMMIT,
-            context: 'ci', status: 'SUCCESS',
-            description: 'Pipeline passed', targetUrl: env.BUILD_URL
-        }
+        githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+          repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+          context: 'ci', status: 'SUCCESS',
+          description: 'Pipeline passed', targetUrl: env.BUILD_URL
       }
     }
     failure {
       script {
-        if (env.GH_NOTIFY_DISABLED != 'true') {
-          githubNotify credentialsId: env.GITHUB_CREDENTIALS,
-            account: env.GH_OWNER, repo: env.GH_REPO, sha: env.GIT_COMMIT,
-            context: 'ci', status: 'FAILURE',
-            description: 'Pipeline failed', targetUrl: env.BUILD_URL
-        }
+        githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+          repoUrl: env.REPO_URL, sha: env.GIT_COMMIT,
+          context: 'ci', status: 'FAILURE',
+          description: 'Pipeline failed', targetUrl: env.BUILD_URL
       }
+    }
+    always {
+      cleanWs(deleteDirs: true, notFailBuild: true)
     }
   }
 }
