@@ -16,31 +16,58 @@ pipeline {
     stage('Checkout') {
       steps {
         script {
-          // 1) checkout и захват переменных SCM
+          // 1) checkout
           def scmVars = checkout scm
           env.GIT_COMMIT = scmVars.GIT_COMMIT
 
-          // 2) извлекаем owner/repo из origin URL
+          // 2) origin URL
           def remote = sh(script: 'git config --get remote.origin.url', returnStdout: true).trim()
-          // поддержка https://github.com/owner/repo.git и git@github.com:owner/repo.git
-          def m = (remote =~ /github\.com[/:]([^\/]+)\/([^\/\.]+)(?:\.git)?$/)
-          if (!m) {
-            echo "WARN: Не удалось распарсить GitHub slug из ${remote} — выключаем githubNotify"
-            env.GH_NOTIFY_DISABLED = 'true'
-          } else {
-            env.GH_OWNER = m[0][1]
-            env.GH_REPO  = m[0][2]
-            echo "GitHub repo: ${env.GH_OWNER}/${env.GH_REPO}, sha: ${env.GIT_COMMIT}"
+          echo "origin: ${remote}"
+
+          // 3) Парсим owner/repo БЕЗ regex
+          String owner = null, repo = null
+
+          if (remote?.startsWith('git@')) {
+            // git@github.com:owner/repo.git
+            def parts = remote.split(':', 2)
+            if (parts.length == 2) {
+              def path = parts[1]
+              if (path.endsWith('.git')) path = path.substring(0, path.length() - 4)
+              def slash = path.indexOf('/')
+              if (slash > 0) {
+                owner = path.substring(0, slash)
+                repo  = path.substring(slash + 1)
+              }
+            }
+          } else if (remote?.startsWith('http')) {
+            // https://github.com/owner/repo(.git)
+            def url = new java.net.URL(remote)
+            def path = url.getPath()
+            if (path.startsWith('/')) path = path.substring(1)
+            if (path.endsWith('.git')) path = path.substring(0, path.length() - 4)
+            def slash = path.indexOf('/')
+            if (slash > 0) {
+              owner = path.substring(0, slash)
+              repo  = path.substring(slash + 1)
+            }
           }
 
-          // хелпер для статусов (используем позже)
-          env.GH_CTX_BASE = 'ci'
-        }
-        script {
-          // ставим общий статус PENDING
-          githubNotify credentialsId: GITHUB_CREDENTIALS, context: env.GH_CTX_BASE, status: 'PENDING',
-                       account: env.GH_OWNER, repo: env.GH_REPO, context: env.GH_CTX_BASE
-                       description: 'Pipeline started', targetUrl: env.BUILD_URL, sha: env.GIT_COMMIT
+          if (owner && repo) {
+            env.GH_OWNER = owner
+            env.GH_REPO  = repo
+            echo "GitHub repo detected: ${env.GH_OWNER}/${env.GH_REPO} @ ${env.GIT_COMMIT}"
+          } else {
+            env.GH_NOTIFY_DISABLED = 'true'
+            echo "WARN: Не удалось распарсить GitHub slug из ${remote} — githubNotify будет отключён"
+          }
+
+          // 4) Общий стартовый статус (если парсинг успешен)
+          if (env.GH_NOTIFY_DISABLED != 'true') {
+            githubNotify credentialsId: env.GITHUB_CREDENTIALS,
+              account: env.GH_OWNER, repo: env.GH_REPO, sha: env.GIT_COMMIT,
+              context: 'ci', status: 'PENDING',
+              description: 'Pipeline started', targetUrl: env.BUILD_URL
+          }
         }
       }
     }
