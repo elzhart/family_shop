@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   tools {
-    jdk 'jdk17'          // Настрой в Jenkins: Manage Jenkins → Tools → JDK installations
+    jdk 'jdk21'          // Настрой в Jenkins: Manage Jenkins → Tools → JDK installations
   }
 
   environment {
