@@ -1,0 +1,11 @@
+.build/
+../family_shop 2/.gradle/
+.gradle-cache/
+out/
+bin/
+**/.DS_Store
+**/node_modules
+**/.idea
+**/.vscode
+**/*.iml
+build/

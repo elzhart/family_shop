@@ -1,0 +1,5 @@
+package com.familyshop.events;
+
+public enum EventType {
+    SHOPPING_ADDED, SHOPPING_UPDATED, SHOPPING_BOUGHT, FREQUENT_UPDATED, HISTORY_ADDED, SHOPPING_DELETED
+}

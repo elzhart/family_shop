@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    container_name: familyshop_db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-familyshop}
+      POSTGRES_USER: ${POSTGRES_USER:-family}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-familypass}
+    ports:
+      - "5432:5432"
+#    volumes:
+#      - pgdata:/var/lib/postgresql/data
+    networks:
+      - family-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+
+#  redis:
+#    image: redis:7
+#    container_name: redis
+#    ports:
+#      - "6379:6379"
+#    networks:
+#      - link-network
+
+networks:
+  family-network:
+    driver: bridge
+
+#volumes:
+#  pgdata:
