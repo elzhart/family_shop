@@ -17,33 +17,6 @@ pipeline {
     stage('Checkout') {
       steps {
       checkout scm
-      script {
-        // 1) macOS автодетект JDK 21
-        def detected = sh(script: '(/usr/libexec/java_home -v 21) 2>/dev/null || true', returnStdout: true).trim()
-        def jdkHome = detected
-
-        // 2) Фолбэк: Jenkins Tool "jdk21" (должен быть настроен в Global Tool Configuration)
-        if (!jdkHome) {
-          try {
-            jdkHome = tool name: 'jdk21', type: 'jdk'
-          } catch (ignored) { /* не настроен */ }
-        }
-
-        // 3) Если всё ещё пусто — явно ошибку с подсказкой
-        if (!jdkHome?.trim()) {
-          error """
-              No JDK 21 found.
-              - На macOS установи Temurin 21:   brew install --cask temurin21
-              - Или в Jenkins: Manage Jenkins → Tools → JDK installations → добавь JDK с именем 'jdk21'
-              - Либо используй Docker-агент (см. вариант 2 ниже)
-          """
-        }
-
-        env.JAVA_HOME = jdkHome
-        env.ORG_GRADLE_JAVA_HOME = jdkHome
-        env.PATH = "${jdkHome}/bin:${env.PATH}"
-      }
-      sh 'echo "JAVA_HOME=$JAVA_HOME" && java -version'
       sh 'chmod +x ./gradlew || true'
       }
     }
