@@ -2,13 +2,11 @@ pipeline {
   agent any
 
   tools {
-    jdk 'jdk21'          // Настрой в Jenkins: Manage Jenkins → Tools → JDK installations
+    jdk 'jdk17'          // Настрой в Jenkins: Manage Jenkins → Tools → JDK installations
   }
 
   environment {
     GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
-    // Для Docker stage (если используешь): имя образа и реестра
-    IMAGE = "my-registry.example.com/familyshop/backend"
     // Название SonarQube-сервера в Jenkins (Manage Jenkins → System → SonarQube servers)
     SONARQUBE_SERVER = 'sonarqube-server'
   }
@@ -16,8 +14,8 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-      checkout scm
-      sh 'chmod +x ./gradlew || true'
+        checkout scm
+        sh 'chmod +x ./gradlew || true'
       }
     }
 
